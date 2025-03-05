@@ -1,73 +1,69 @@
-import pytest
 from unittest.mock import patch, Mock, MagicMock
-from PIL import Image
-import cv2
+from ..classifier import YOLOv5Classifier
 
-from my_classifier.models import YOLOv5Classifier  # Adjust import based on your package structure
+class TestYOLOv5Classifier:
+    def setup_method(self):
+        """Runs before each test method to set up common state."""
+        with patch('torch.hub.load') as self.mock_torch_hub_load:
+            self.classifier = YOLOv5Classifier(model_path="test/path/model.pt")
+            self.mock_model = self.mock_torch_hub_load.return_value
 
-# Fixture for the classifier with mocked torch.hub.load
-@pytest.fixture
-def classifier():
-    with patch('torch.hub.load') as mock_torch_hub:
-        mock_model = MagicMock()
-        mock_torch_hub.return_value = mock_model
-        classifier = YOLOv5Classifier(model_path="mock/path/to/model.pt")
-        yield classifier, mock_torch_hub, mock_model
+    @patch('torch.hub.load')
+    def test_init(self, mock_torch_hub_load):
+        """Test that __init__ loads the model with the correct path."""
+        model_path = "test/path/model.pt"
+        classifier = YOLOv5Classifier(model_path=model_path)
+        
+        mock_torch_hub_load.assert_called_once_with('ultralytics/yolov5', 'custom', path=model_path)
+        assert classifier.model == mock_torch_hub_load.return_value
 
-def test_init(classifier):
-    """Test that the classifier initializes with the correct model path."""
-    classifier_instance, mock_torch_hub, mock_model = classifier
-    mock_torch_hub.assert_called_once_with('ultralytics/yolov5', 'custom', path="mock/path/to/model.pt")
-    assert classifier_instance.model == mock_model
+    def test_predict(self):
+        """Test that predict calls the model with the image and returns results."""
+        fake_image = "fake_image_data"
+        mock_results = Mock()
+        self.mock_model.return_value = mock_results
+        
+        result = self.classifier.predict(fake_image)
+        
+        self.mock_model.assert_called_once_with(fake_image)
+        assert result == mock_results
 
-def test_predict(classifier):
-    """Test the predict method with a mock image."""
-    classifier_instance, _, mock_model = classifier
-    mock_image = Mock()
-    mock_results = Mock()
-    mock_model.return_value = mock_results
+    @patch('PIL.Image.open')  # Adjust based on your import
+    def test_process_image(self, mock_image_open):
+        """Test that process_image opens an image and calls predict."""
+        image_path = "test/image.jpg"
+        mock_image = MagicMock()
+        mock_image_open.return_value.__enter__.return_value = mock_image
+        mock_results = Mock()
+        self.mock_model.return_value = mock_results
+        
+        result = self.classifier.process_image(image_path)
+        
+        mock_image_open.assert_called_once_with(image_path)
+        self.mock_model.assert_called_once_with(mock_image)
+        assert result == mock_results
 
-    results = classifier_instance.predict(mock_image)
+    @patch('cv2.VideoCapture')  # Adjust based on your import
+    def test_process_video(self, mock_video_capture):
+        """Test that process_video processes frames and releases the capture."""
+        video_path = "test/video.mp4"
+        mock_cap = mock_video_capture.return_value
+        mock_cap.isOpened.side_effect = [True, True, False]  # Two frames, then end
+        mock_cap.read.side_effect = [
+            (True, "frame1"),
+            (True, "frame2"),
+            (False, None),
+        ]
+        mock_results = Mock()
+        self.mock_model.side_effect = [mock_results, mock_results]
+        
+        self.classifier.process_video(video_path)
+        
+        mock_video_capture.assert_called_once_with(video_path)
+        assert mock_cap.read.call_count == 2
+        assert self.mock_model.call_count == 2
+        mock_cap.release.assert_called_once()
 
-    mock_model.assert_called_once_with(mock_image)
-    assert results == mock_results
-
-@pytest.mark.parametrize("image_path", ["mock/image.jpg", "test/path/image.png"])
-@patch('PIL.Image.open')
-def test_process_image(mock_image_open, classifier, image_path):
-    """Test processing an image file with different paths."""
-    classifier_instance, _, mock_model = classifier
-    mock_image = Mock(spec=Image.Image)
-    mock_image_open.return_value.__enter__.return_value = mock_image
-    mock_results = Mock()
-    mock_model.return_value = mock_results
-
-    results = classifier_instance.process_image(image_path)
-
-    mock_image_open.assert_called_once_with(image_path)
-    mock_model.assert_called_once_with(mock_image)
-    assert results == mock_results
-
-@patch('cv2.VideoCapture')
-def test_process_video(mock_video_capture, classifier):
-    """Test processing a video file."""
-    classifier_instance, _, mock_model = classifier
-    mock_cap = MagicMock()
-    mock_video_capture.return_value = mock_cap
-    
-    # Simulate video frames
-    mock_cap.isOpened.side_effect = [True, True, False]  # Two frames, then end
-    mock_cap.read.side_effect = [
-        (True, Mock()),  # First frame
-        (True, Mock()),  # Second frame
-        (False, None)    # End of video
-    ]
-    mock_results = Mock()
-    mock_model.return_value = mock_results
-
-    classifier_instance.process_video("mock/video.mp4")
-
-    mock_video_capture.assert_called_once_with("mock/video.mp4")
-    assert mock_cap.read.call_count == 3  # Called until False
-    assert mock_model.call_count == 2     # Two frames processed
-    mock_cap.release.assert_called_once()
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

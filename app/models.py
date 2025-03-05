@@ -1,4 +1,6 @@
 import torch
+from PIL import Image
+import cv2
 
 class YOLOv5Classifier:
   def __init__(self, model_path='path/to/your/yolov5_model.pt'):
